@@ -1,0 +1,206 @@
+---
+title: "BUAN6356_Homework 4_Group 7"
+title1: Group No 7 - Homework 4
+title2: Wed Batch - 1pm to 3.45pm
+author1: Aagosh Bansal
+author2: Sheetal Gangrade
+author3: Sanjula Kaul
+author4: Divya Deepak Pai
+author5: Shylaja Vijayaraghavan
+date: "15/11/2019"
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r LOAD}
+#install packages
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load( ISLR,tidyverse,ggplot2, leaps, data.table, rpart, rpart.plot,gbm, MASS, caret, randomForest, dplyr,corrplot,glmnet) 
+theme_set(theme_classic())
+
+search()
+
+```
+
+# **Answer 1**
+
+```{r read data, remove null}
+data(Hitters)
+Hitters.df <- data.frame(Hitters)
+
+HittersModified.df <- Hitters.df[!(is.na(Hitters$Salary) | Hitters$Salary==""), ]
+
+```
+# **There are 322 observations in original dataset Hitters. After removing Nulls from Salary column, we are left with 263 observations. 59 observations were removed where Salary was null.**
+
+# **Answer 2**
+```{r log transform}
+
+ggplot(HittersModified.df) +
+  geom_histogram(aes(x = Salary), binwidth = 100) +
+  ggtitle("Histogram of Salary Variable")
+
+ggplot(HittersModified.df, aes(x = Salary)) + geom_histogram() + scale_x_log10() + stat_bin(bins = 100)
+
+set.seed(42)
+#skewness(HittersModified.df$Salary)
+#skewness(log1p(HittersModified.df$Salary))
+HittersModified.df$Salary <- log(HittersModified.df$Salary)
+
+```
+# **We first plot histogram for salary variable in order to check the skewness. We find that it is right skewed as expected, which means only few players receive high salaries than other players. **
+
+# **After performing log transformation, we see that the skewness is corrected and the distribution is almost normal. **
+
+# **Answer 3**
+
+```{r scatter}
+
+ggplot(HittersModified.df) +
+  geom_point(aes(x = Years, y = Hits, color = Salary)) +
+ # scale_colour_manual(values=c("red", "blue","green"))
+  ggtitle("Hits Vs Years")
+
+```
+# **As seen from the scatterplot above, as the Years and Hits increase, the log(Salary) also increaes. This is indicated by the color coding. Lighter the color shade, more is the value of log(Salary). It can be interpreted that more number of hits, more salary is offered to the players. Also, a player with more experience gets a higher pay.**
+
+# **Answer 4**
+
+# **We will perform a linear regression model of log Salary on all the numerical predictors.**
+
+```{r regression, regsubsets, BIC}
+
+#linear regression
+require(leaps)
+set.seed(42)
+HittersModified.lm <- lm(Salary ~ ., data = HittersModified.df)
+
+#regsubsets
+search <- regsubsets(Salary ~ ., data = HittersModified.df)
+summary_regsubsets <- summary(search)
+summary_regsubsets$bic
+which.min(summary_regsubsets$bic)
+
+#show models
+summary_regsubsets$which
+
+# show models
+#sum$which
+
+```
+
+# **When running the subset selection algorithm using regsubsets and using BIC on log(salary), we find that the 3rd model is the best model since it has the lowest BIC. The predictors included in this model are Hits, Walks and Years.    **
+
+
+# **Answer 5**
+
+```{r Splitting}
+library("data.table")
+HittersModified.dt <- setDT(HittersModified.df)
+
+# **Split the data into training (80%) and validation/test set (20%)**
+set.seed(42)
+training.index <- sample(1:nrow(HittersModified.df), 0.8*(nrow(HittersModified.df))) 
+Hitters.train <- HittersModified.df[training.index, ]
+Hitters.valid <- HittersModified.df[-training.index, ]
+
+
+```
+
+
+# **Answer 6**
+
+```{r RegressionTree}
+
+# Generate regression tree
+set.seed(42)
+hitters.train.regtree <- rpart(Salary ~ Years + Hits, data = Hitters.train, method = "anova")
+
+
+prp(hitters.train.regtree, type = 2,extra=1, under = TRUE, split.font = 2, 
+    varlen = -10, box.palette = "BuOr")
+
+rpart.rules(hitters.train.regtree, cover = TRUE ) # find rules 
+
+
+
+```
+# **The players who have played atleast for 5 years and having hits greater than or equal to 104 are getting the highest salaries. **
+# **The rule is when	Years	>= 5	&	Hits >=	104. 27.3% of the players receive highest salaries.**
+
+
+# **Answer 7**
+
+```{r MSEvsSHRINKAGE}
+
+set.seed(42)
+
+# regression tree using all predictors
+hitters.train.regtree.allpred <- rpart(log(Salary) ~ ., data = Hitters.train)
+
+prp(hitters.train.regtree.allpred, type = 1,extra=1, under = TRUE, split.font = 2, 
+    varlen = -10, box.palette = "BuOr")
+
+rpart.rules(hitters.train.regtree.allpred, cover = TRUE) # find rules
+
+
+
+pows <-  seq(-10, -0.2, by=0.1)
+lambdas <-  10 ^ pows
+length.lambdas <-  length(lambdas)
+train.errors <-  rep(NA, length.lambdas)
+test.errors <-  rep(NA, length.lambdas)
+
+for (i in 1:length.lambdas) {
+  boost.hitters <-  gbm(Salary ~ . , data=Hitters.train,
+                        distribution="gaussian",
+                        n.trees=1000,
+                        shrinkage=lambdas[i])
+  train.pred <-  predict(boost.hitters, Hitters.train, n.trees=1000)
+  test.pred <-  predict(boost.hitters, Hitters.valid, n.trees=1000)
+  train.errors[i] <-  mean((Hitters.train$Salary - train.pred)^2)
+  test.errors[i] <-  mean((Hitters.valid$Salary - test.pred)^2)
+}
+
+plot(lambdas, train.errors, type="b", 
+     xlab="Shrinkage", ylab="Train MSE", 
+     col="Blue", pch=20, bty = "n")
+
+
+```
+
+# **Answer 8 **
+```{r MSEvsShrinkage test}
+
+#For range of shrinkage values - test dataset
+plot(lambdas, test.errors, type="b", 
+     xlab="Shrinkage", ylab="Test MSE", 
+     col="blue", pch=20)
+
+
+```
+
+# **Answer 9**
+``` {r Boostedmodel}
+set.seed(42)
+vboost.valid <- gbm(log(Salary)~., data=Hitters.valid, distribution = "gaussian", n.trees=1000)
+summary(vboost.valid , las = 2)
+```
+#  **CAtBat:13.541844, Assists:12.142009, CWalks:10.597692, Errors:10.149989 and CHits	9.039227 are the top 5 most important variables in the same order.**
+    
+# **Answer 10**
+``` {r Bagging}
+library(randomForest)
+set.seed(42)
+rf.hitters <-  randomForest(Salary ~ . , data=Hitters.train, 
+                            ntree=1000, mtry=19)
+rf.pred <-  predict(rf.hitters, Hitters.valid)
+mean((Hitters.valid$Salary - rf.pred)^2)
+```
+# **The test set MSE value after applying bagging to the training dataset is 0.2442542.**
